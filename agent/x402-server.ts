@@ -1,34 +1,23 @@
-import { GoatX402Client, parseX402Header, type X402PaymentRequired } from "goatx402-sdk-server";
 import type { Request, Response, NextFunction } from "express";
 import { env } from "@/lib/env";
 import { activity } from "./activity";
-import { addressOf } from "./wallet";
+import { addressOf, publicGoat } from "./wallet";
 
 /**
- * x402 paywall middleware built on the real `goatx402-sdk-server`.
+ * x402 paywall middleware — native implementation of the x402 HTTP payment protocol.
  *
- * Two-phase flow:
- *   1. Request arrives without `x-payment-order-id` header → we create an order with
- *      the GoatX402 merchant API and respond 402 with the x402 challenge body the
- *      client needs to make payment.
- *   2. Request arrives with `x-payment-order-id` → we ask the SDK for the order
- *      status; if confirmed, we let it through and stash the proof on res.locals.
+ * Two-phase flow (standard x402):
+ *   Phase 1 — no x-payment-tx header:
+ *     Respond 402 with a challenge: { accepts: [{ payTo, amount, asset, network }], order_id }
+ *     The client must transfer `amount` of `asset` to `payTo` on the specified network.
  *
- * Mock-mode (env.useMockX402 = true) bypasses the SDK entirely so the demo runs
- * offline before merchant credentials are issued.
+ *   Phase 2 — x-payment-tx header present:
+ *     Verify the on-chain transfer happened (correct asset, correct payTo, correct amount).
+ *     If confirmed, let the request through.
+ *
+ * Mock-mode (env.useMockX402 = true) bypasses all chain calls so the demo runs
+ * without a funded wallet.
  */
-
-function maybeClient(): GoatX402Client | undefined {
-  if (env.useMockX402) return undefined;
-  if (!env.goatX402ApiKey || !env.goatX402ApiSecret) return undefined;
-  return new GoatX402Client({
-    baseUrl: env.goatX402ApiUrl,
-    apiKey: env.goatX402ApiKey,
-    apiSecret: env.goatX402ApiSecret,
-  });
-}
-
-const client = maybeClient();
 
 export interface PaywallOptions {
   priceUsd: number;
@@ -36,56 +25,75 @@ export interface PaywallOptions {
   tokenContract?: string; // default env.usdcAddress
 }
 
+const ERC20_TRANSFER_EVENT =
+  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
 export function x402Paywall(opts: PaywallOptions) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    if (env.useMockX402 || !client) return next();
+    if (env.useMockX402) return next();
 
     try {
+      const txHash = req.header("x-payment-tx") as `0x${string}` | undefined;
       const orderId = req.header("x-payment-order-id");
-      const txHash = req.header("x-payment-tx");
 
-      if (!orderId) {
-        // Phase 1 — create order and serve 402 challenge.
-        const payerAddress =
-          (typeof req.body?.payerAddress === "string" && req.body.payerAddress) ||
-          req.header("x-payer-address") ||
-          undefined;
+      const payTo = addressOf(env.topicExtractorKey).toLowerCase();
+      const asset = (opts.tokenContract ?? env.usdcAddress).toLowerCase();
+      const amountWei = BigInt(Math.round(opts.priceUsd * 1_000_000)); // USDC 6 dec
 
-        if (!payerAddress) {
-          return res.status(400).json({
-            error: "missing_payer",
-            hint: "Include 'payerAddress' in request body or 'x-payer-address' header so we can create the x402 order.",
+      if (!txHash) {
+        // Phase 1 — issue a standard x402 challenge.
+        const challenge = {
+          x402Version: 1,
+          order_id: `studyhire-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          accepts: [
+            {
+              scheme: "exact",
+              network: `eip155:${env.goatChainId}`,
+              asset,
+              payTo: addressOf(env.topicExtractorKey),
+              amount: amountWei.toString(),
+              extra: { tokenSymbol: opts.symbol ?? "USDC", flow: "ERC20_DIRECT" },
+            },
+          ],
+          extensions: {
+            goatx402: { expiresAt: Math.floor(Date.now() / 1000) + 300 },
+          },
+        };
+        return res.status(402).json(challenge);
+      }
+
+      // Phase 2 — verify the on-chain transfer.
+      let confirmed = false;
+      try {
+        const receipt = await publicGoat().getTransactionReceipt({ hash: txHash });
+        if (receipt.status === "success") {
+          // Look for an ERC-20 Transfer(from, to, amount) to payTo of amountWei.
+          confirmed = receipt.logs.some((log) => {
+            if (log.topics[0]?.toLowerCase() !== ERC20_TRANSFER_EVENT) return false;
+            if (log.address.toLowerCase() !== asset) return false;
+            const to = "0x" + (log.topics[2] ?? "").slice(26).toLowerCase();
+            const value = BigInt(log.data || "0x0");
+            return to === payTo && value >= amountWei;
           });
         }
-
-        const amountWei = BigInt(Math.round(opts.priceUsd * 1_000_000)).toString(); // USDC = 6 dec
-        const order = await client.createOrderRaw({
-          dappOrderId: `studyhire-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          chainId: env.goatChainId,
-          tokenSymbol: opts.symbol ?? "USDC",
-          tokenContract: opts.tokenContract ?? env.usdcAddress,
-          fromAddress: payerAddress,
-          amountWei,
-        });
-        return res.status(402).json(order satisfies X402PaymentRequired);
+      } catch {
+        // If RPC is unreachable, fall through to unconfirmed branch.
       }
 
-      // Phase 2 — verify payment.
-      const status = await client.getOrderStatus(orderId);
-      if (status.status !== "PAYMENT_CONFIRMED" && status.status !== "INVOICED") {
+      if (!confirmed) {
         return res.status(402).json({
           error: "payment_not_confirmed",
-          orderId,
-          currentStatus: status.status,
-          observedTxHash: txHash ?? null,
+          txHash,
+          hint: "Transfer not found or amount too low. Ensure USDC was sent to the payTo address on the correct chain.",
         });
       }
 
-      res.locals.x402Proof = status;
+      res.locals.x402Proof = { txHash, orderId };
       activity.push({
         kind: "x402_payment",
-        title: `x402 verified ${opts.priceUsd.toFixed(2)} ${opts.symbol ?? "USDC"} (order ${orderId})`,
-        body: status.txHash,
+        title: `x402 verified $${opts.priceUsd.toFixed(2)} ${opts.symbol ?? "USDC"}`,
+        body: txHash,
+        data: { txHash, orderId: orderId ?? null },
       });
       return next();
     } catch (err) {
