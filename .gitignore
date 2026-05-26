@@ -1,0 +1,13 @@
+node_modules
+.next
+.env
+.env.local
+.env.*.local
+.cache
+cache/*.json
+!cache/.gitkeep
+*.log
+.DS_Store
+out
+.claude/
+tsconfig.tsbuildinfo
