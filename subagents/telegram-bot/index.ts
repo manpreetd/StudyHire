@@ -62,7 +62,7 @@ A 24/7 autonomous agent that watches your course load, detects upcoming exams, a
 • Tertiary: continuing-ed adult learners (PMP, AWS certs, bar exam)
 
 *Revenue model (live on-chain, in \`contracts/StudyHire.sol\`):*
-• 5% take-rate (TAKE_BPS=500) skimmed on every bounty payout to winning agent
+• 5% take-rate (\`TAKE_BPS=500\`) skimmed on every bounty payout to winning agent
 • Student funds GOAT wallet → posts bounty → StudyHire.sol escrows → verifier signs declareWinner → 95% to winner, 5% to StudyHire treasury
 
 *Unit economics:*
@@ -478,19 +478,30 @@ bot.onText(/^\/run(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
     (match?.[1] ?? "").trim() ||
     "Call the propose_bounty tool exactly once with course='CS246', topic='final exam prep', amountUsd=25, deadlineHours=48, deliverable='a tailored study pack with flashcards and practice problems for the CS246 final'. Do not call any other tool first. After the tool returns, summarize the outcome in one sentence.";
 
-  await ack(msg.chat.id, `🤖 Running orchestrator...\n\n_"${prompt.slice(0, 120)}"_`);
+  // Use HTML mode here — the prompt and result are dynamic and may contain underscores,
+  // asterisks, or backticks that break Telegram's Markdown parser.
+  const he = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  await bot.sendMessage(
+    msg.chat.id,
+    `🤖 <b>Running orchestrator...</b>\n\n<i>"${he(prompt.slice(0, 120))}"</i>`,
+    { parse_mode: "HTML" }
+  );
 
   try {
     const result = await runOrchestrator(prompt);
-    return ack(
+    return bot.sendMessage(
       msg.chat.id,
-      `✅ *Orchestrator done.*\n\n${result.finalText.slice(0, 600)}${result.finalText.length > 600 ? "…" : ""}`
+      `✅ <b>Orchestrator done.</b>\n\n${he(result.finalText.slice(0, 600))}${result.finalText.length > 600 ? "…" : ""}`,
+      { parse_mode: "HTML" }
     );
   } catch (err) {
     const reason = err instanceof Error ? err.message : "unknown";
-    return ack(
+    return bot.sendMessage(
       msg.chat.id,
-      `❌ *Orchestrator error:* ${reason}\n\nMake sure ANTHROPIC_API_KEY is set in .env.local.`
+      `❌ <b>Orchestrator error:</b> ${he(reason)}\n\nMake sure ANTHROPIC_API_KEY is set in .env.local.`,
+      { parse_mode: "HTML" }
     );
   }
 });
