@@ -92,7 +92,7 @@ export default function Page() {
             <ol className="list-decimal pl-5 space-y-1">
               <li>Open Telegram, message your bot.</li>
               <li>Send <code className="text-accent">/start</code> — see self-description.</li>
-              <li>Send <code className="text-accent">/quick-prep recursion</code> — watch x402 tx land here.</li>
+              <li>Send <code className="text-accent">/quickprep recursion</code> — watch x402 tx land here.</li>
               <li>Trigger a bounty proposal — watch <code className="text-warn">confirm_requested</code> appear.</li>
               <li>Reply <code className="text-accent">/confirm &lt;id&gt;</code> on Telegram.</li>
             </ol>

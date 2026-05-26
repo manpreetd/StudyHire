@@ -5,6 +5,7 @@ import { sendTelegram } from "@/agent/telegram";
 import { confirmQueue } from "@/agent/confirm-queue";
 import { payAndFetch } from "@/agent/payments";
 import { state, setLimit, addCourse, listCourses } from "@/agent/state";
+import { runOrchestrator } from "@/agent/orchestrator";
 
 /**
  * Telegram bot — the rubric's judging surface.
@@ -26,6 +27,7 @@ Fund my GOAT wallet once, tell me your courses, and I'll:
 
 *Commands:*
 /quickprep <topic>  – test me: I'll pay a topic-extractor $0.10 via x402
+/run [prompt]       – trigger the autonomous orchestrator (propose bounties + HITL gate)
 /status             – current jobs + balance + pending confirmations
 /balance            – wallet + escrow snapshot
 /addcourse <id>     – track a course
@@ -51,6 +53,7 @@ void bot
     { command: "start", description: "what I do + command list" },
     { command: "help", description: "same as /start" },
     { command: "quickprep", description: "pay topic-extractor $0.10 via x402 (judge test)" },
+    { command: "run", description: "run the orchestrator with a custom prompt (Cat 4 demo)" },
     { command: "status", description: "current jobs + balance + pending confirmations" },
     { command: "balance", description: "wallet + escrow snapshot" },
     { command: "addcourse", description: "track a course (e.g. /addcourse CS246)" },
@@ -259,6 +262,29 @@ bot.onText(/^\/abort(?:@\w+)?(?:\s+(\S+))?$/, (msg, match) => {
   ack(msg.chat.id, `🛑 Action *${id}* aborted. Nothing was spent.`);
 });
 
+bot.onText(/^\/run(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
+  logIn(msg, `/run ${match?.[1] ?? ""}`);
+  const prompt =
+    (match?.[1] ?? "").trim() ||
+    "Check tracked courses and propose a $25 bounty for the next upcoming exam. If no courses are tracked, propose a demo bounty for CS246 final.";
+
+  await ack(msg.chat.id, `🤖 Running orchestrator...\n\n_"${prompt.slice(0, 120)}"_`);
+
+  try {
+    const result = await runOrchestrator(prompt);
+    return ack(
+      msg.chat.id,
+      `✅ *Orchestrator done.*\n\n${result.finalText.slice(0, 600)}${result.finalText.length > 600 ? "…" : ""}`
+    );
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "unknown";
+    return ack(
+      msg.chat.id,
+      `❌ *Orchestrator error:* ${reason}\n\nMake sure ANTHROPIC_API_KEY is set in .env.local.`
+    );
+  }
+});
+
 bot.onText(/^\/limit(?:@\w+)?(?:\s+(\S+))?$/, (msg, match) => {
   logIn(msg, `/limit ${match?.[1] ?? ""}`);
   const raw = (match?.[1] ?? "").trim();
@@ -279,7 +305,7 @@ bot.on("message", (msg) => {
   if (msg.text.startsWith("/")) {
     // A slash command we don't recognize. Catch it explicitly.
     const known =
-      /^\/(start|help|status|balance|quickprep|quick_prep|quick-prep|addcourse|add_course|add-course|listcourses|list_courses|list-courses|confirm|abort|limit)(?:@\w+)?(\s|$)/.test(
+      /^\/(start|help|run|status|balance|quickprep|quick_prep|quick-prep|addcourse|add_course|add-course|listcourses|list_courses|list-courses|confirm|abort|limit)(?:@\w+)?(\s|$)/.test(
         msg.text
       );
     if (known) return;
