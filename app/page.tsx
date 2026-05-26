@@ -218,8 +218,8 @@ export default function Page() {
                 <span className="text-mute">Cat 4 — /run + /confirm gate</span>
               </li>
               <li className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
-                <span className="text-mute">Cat 1 — 5% take-rate pitch</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-ok shrink-0" />
+                <span className="text-mute">Cat 1 — /pitch · 5% take-rate</span>
               </li>
             </ul>
           </div>

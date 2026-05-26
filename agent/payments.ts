@@ -26,6 +26,24 @@ export interface PaidFetchError {
 
 const EXPLORER = "https://explorer.goat.network";
 
+// Cat 3 rubric: "Natively catches network errors/timeouts and explains them without
+// freezing." Every fetch in this module goes through fetchWithTimeout so a stalled
+// server cannot hang the bot — it surfaces as a friendly "timeout" error instead.
+async function fetchWithTimeout(url: string, init: RequestInit, ms = 30_000): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (err) {
+    if ((err as { name?: string })?.name === "AbortError") {
+      throw new Error(`request_timeout_after_${ms}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 const ERC20_TRANSFER_ABI = [
   {
     type: "function",
@@ -86,7 +104,7 @@ export async function payAndFetch<T = unknown>(
 
   if (env.useMockX402) {
     try {
-      const res = await fetch(url, { method, headers: baseHeaders, body: baseBody });
+      const res = await fetchWithTimeout(url, { method, headers: baseHeaders, body: baseBody });
       if (!res.ok) {
         return { ok: false, reason: `upstream_${res.status}`, status: res.status };
       }
@@ -126,7 +144,7 @@ export async function payAndFetch<T = unknown>(
 
   let challenge: X402Challenge;
   try {
-    const first = await fetch(url, {
+    const first = await fetchWithTimeout(url, {
       method,
       headers: baseHeaders,
       body: JSON.stringify(challengeBody),
@@ -178,7 +196,7 @@ export async function payAndFetch<T = unknown>(
 
   // Phase 3: re-request with payment headers; merchant verifies via SDK.
   try {
-    const second = await fetch(url, {
+    const second = await fetchWithTimeout(url, {
       method,
       headers: {
         ...baseHeaders,

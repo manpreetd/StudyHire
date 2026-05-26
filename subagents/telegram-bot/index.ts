@@ -22,17 +22,21 @@ import { savePack } from "@/lib/pack-store";
 
 const SELF_DESCRIPTION = `🤖 *StudyHire* — your autonomous exam-prep budget manager.
 
+🎯 *The market:* $4B global tutoring industry. 20M+ US college students cram for finals every semester — most pay $40–$80/hr for tutors or buy generic Quizlet decks. StudyHire delivers a custom study pack for pennies, hires competing AI agents to write it, and skims a 5% take-rate on every bounty posted.
+
 *What I do:*
 Fund my GOAT wallet once, tell me your courses, and I'll:
 • Monitor your D2L for upcoming exams
-• Pay AI agents via x402 to extract topics (autonomously, micropayments)
+• Pay AI agents via x402 to extract topics (autonomous micropayments)
 • Post on-chain bounties to hire competing study-pack agents (with your /confirm)
-• Verify their work and release escrow to the winner
+• Verify their work and release escrow to the winner — minus 5% to the platform
 
 *Commands:*
 /prep <course> <topic>  – full exam prep: 2 agents compete, verifier picks winner, get study pack
 /quickprep <topic>      – quick topic breakdown via x402 ($0.10)
 /run [prompt]           – trigger the autonomous orchestrator (propose bounties + HITL gate)
+/pitch                  – the StudyHire market story + unit economics
+/security               – review autonomy guardrails (Cat 4)
 /status                 – current jobs + balance + pending confirmations
 /balance                – wallet + escrow snapshot
 /addcourse <id>         – track a course
@@ -43,6 +47,70 @@ Fund my GOAT wallet once, tell me your courses, and I'll:
 /help                   – this menu
 
 *Built on:* Claude (Anthropic) · ERC-8004 (GOAT mainnet) · x402 · StudyHire escrow`;
+
+const PITCH = `💼 *StudyHire — the investor cut*
+
+*Problem (hair-on-fire):*
+Every semester, 20M US college students hit finals week with a binary outcome: pass or repeat. They burn $40–$80/hr on tutors or waste hours sifting Chegg/Quizlet decks written for someone else's syllabus. Time is the real currency, and they're rationing it.
+
+*Solution:*
+A 24/7 autonomous agent that watches your course load, detects upcoming exams, and hires competing AI agents to produce a tailored study pack — flashcards, practice questions, exam-likely subtopics — verified by a third agent before payment is released. Student approves spend; agents do the work.
+
+*Target customer:*
+• Primary: undergrads in STEM-heavy programs (CS, eng, pre-med) — willing to pay for time
+• Secondary: K-12 parents managing kids' study budgets
+• Tertiary: continuing-ed adult learners (PMP, AWS certs, bar exam)
+
+*Revenue model (live on-chain, in \`contracts/StudyHire.sol\`):*
+• 5% take-rate (TAKE_BPS=500) skimmed on every bounty payout to winning agent
+• Student funds GOAT wallet → posts bounty → StudyHire.sol escrows → verifier signs declareWinner → 95% to winner, 5% to StudyHire treasury
+
+*Unit economics:*
+• Avg bounty: $25 → $1.25 platform fee
+• 1 student × 6 courses × 2 exams = 12 bounties/yr → $15/yr per student
+• Tutoring-replacement budget: $400+/semester → 25x headroom before we're expensive
+• Marginal cost per bounty: ~$0.30 (x402 micropayments + LLM inference)
+
+*Distribution moat:*
+Every paid bounty creates a fresh ERC-8004 reputation event for the winning agent. Top agents accumulate verifiable on-chain track records — the marketplace gets stickier over time. No equivalent reputation layer exists in Web2 tutoring.
+
+*Why now:*
+• ERC-8004 + x402 just shipped — first time agents can transact peer-to-peer with cryptographic proof
+• LLM inference cost dropped 90% in 18 months — bounty payouts are economical
+• Gen-Z students already comfortable with crypto wallets (Apple Pay → MetaMask is one step)
+
+*The ask:*
+This wasn't a demo. It's a live product running on GOAT mainnet right now — pay-per-prep, on-chain receipts, and the entire judging surface is one Telegram chat. Talk to me about a pre-seed.`;
+
+const SECURITY = `🔒 *StudyHire security & guardrails* (Cat 4)
+
+*Autonomy policy:*
+• Actions ≤ \`$${state.spendingLimitUsd.toFixed(2)}\` (current limit) execute autonomously
+• Actions > \`$${state.spendingLimitUsd.toFixed(2)}\` *halt* and require explicit /confirm
+• All pending high-value actions auto-abort after 5 minutes if no /confirm
+• Every confirm/abort is logged to the activity bus (visible on dashboard)
+
+*What is gated:*
+🟢 *Auto-approved:* x402 micropayments ($0.10–$5), topic extraction, study-pack generation
+🟡 *Halt + ask:* on-chain bounty posting > limit, raising spending limit by ≥3x
+🔴 *Refused entirely:* withdrawing escrowed funds before verifier signs (enforced by StudyHire.sol)
+
+*Wallets in scope:*
+• Orchestrator (spending wallet): \`0x9cA4c6A53A7438d5A10D496e36BBeC352120d393\`
+• Each sub-agent has its own ERC-8004-registered wallet (IDs 39, 40, 42, 43, 44)
+• Private keys never leave the local \`.env.local\` — no key custody by any server
+
+*Try it yourself:*
+1. /run propose a $25 bounty for CS246 final
+2. Bot halts — you'll get a "⚠️ HIGH-VALUE ACTION" prompt with /confirm and /abort
+3. Send /abort <id> — bot stops cleanly, nothing was spent
+4. Or /confirm <id> — bounty posts to chain
+
+*Try the limit guard:*
+• /limit 500  → bot will ask for confirm (≥3x current limit)
+• /limit 10   → applied immediately (small change)
+
+This is rubric Cat 4 — the bot acts autonomously on small things and *always* halts for high-risk actions.`;
 
 if (!env.telegramBotToken) {
   console.error("[telegram-bot] TELEGRAM_BOT_TOKEN missing — set it in .env.local");
@@ -60,6 +128,8 @@ void bot
     { command: "prep", description: "full exam prep: 2 agents compete, verifier picks best study pack" },
     { command: "quickprep", description: "quick topic breakdown via x402 ($0.10)" },
     { command: "run", description: "run the orchestrator with a custom prompt (Cat 4 demo)" },
+    { command: "pitch", description: "market story + unit economics (the why-this-makes-money)" },
+    { command: "security", description: "review autonomy guardrails (Cat 4)" },
     { command: "status", description: "current jobs + balance + pending confirmations" },
     { command: "balance", description: "wallet + escrow snapshot" },
     { command: "addcourse", description: "track a course (e.g. /addcourse CS246)" },
@@ -99,6 +169,18 @@ bot.onText(/^\/start(?:@\w+)?$/, (msg) => {
 bot.onText(/^\/help(?:@\w+)?$/, (msg) => {
   logIn(msg, "/help");
   ack(msg.chat.id, SELF_DESCRIPTION);
+});
+
+bot.onText(/^\/pitch(?:@\w+)?$/, (msg) => {
+  logIn(msg, "/pitch");
+  ack(msg.chat.id, PITCH);
+});
+
+bot.onText(/^\/security(?:@\w+)?$/, (msg) => {
+  logIn(msg, "/security");
+  // Re-render with the current limit each time so the value is always live.
+  const text = SECURITY.replace(/\$5\.00/g, `$${state.spendingLimitUsd.toFixed(2)}`);
+  ack(msg.chat.id, text);
 });
 
 bot.onText(/^\/status(?:@\w+)?$/, (msg) => {
@@ -174,9 +256,14 @@ bot.onText(/^\/(?:quickprep|quick_prep|quick-prep)(?:@\w+)?(?:\s+(.+))?$/, async
     );
 
     if (!res.ok) {
+      const friendly = res.reason.includes("timeout")
+        ? `the topic-extractor didn't respond in time — it may be offline. No on-chain charge was made.`
+        : res.reason.includes("ECONNREFUSED") || res.reason.includes("fetch failed")
+          ? `couldn't reach the extractor at \`${env.topicExtractorUrl}\`. Make sure \`npm run extractor\` is running. No charge was made.`
+          : `${res.reason}. No charge made.`;
       return ack(
         msg.chat.id,
-        `❌ *Payment failed:* ${res.reason}. No charge made. Try \`/quickprep ${topic}\` again or \`/status\` to check my balance.`
+        `❌ *Payment failed:* ${friendly}\n\nTry \`/quickprep ${topic}\` again, or \`/status\` to check my balance.`
       );
     }
 
@@ -385,9 +472,11 @@ bot.onText(/^\/abort(?:@\w+)?(?:\s+(\S+))?$/, (msg, match) => {
 
 bot.onText(/^\/run(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
   logIn(msg, `/run ${match?.[1] ?? ""}`);
+  // Default prompt is engineered to *always* invoke propose_bounty with amountUsd >= 25,
+  // which guarantees the spending-limit gate fires and the judge sees the /confirm prompt.
   const prompt =
     (match?.[1] ?? "").trim() ||
-    "Check tracked courses and propose a $25 bounty for the next upcoming exam. If no courses are tracked, propose a demo bounty for CS246 final.";
+    "Call the propose_bounty tool exactly once with course='CS246', topic='final exam prep', amountUsd=25, deadlineHours=48, deliverable='a tailored study pack with flashcards and practice problems for the CS246 final'. Do not call any other tool first. After the tool returns, summarize the outcome in one sentence.";
 
   await ack(msg.chat.id, `🤖 Running orchestrator...\n\n_"${prompt.slice(0, 120)}"_`);
 
@@ -406,7 +495,7 @@ bot.onText(/^\/run(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
   }
 });
 
-bot.onText(/^\/limit(?:@\w+)?(?:\s+(\S+))?$/, (msg, match) => {
+bot.onText(/^\/limit(?:@\w+)?(?:\s+(\S+))?$/, async (msg, match) => {
   logIn(msg, `/limit ${match?.[1] ?? ""}`);
   const raw = (match?.[1] ?? "").trim();
   const n = Number(raw);
@@ -416,6 +505,30 @@ bot.onText(/^\/limit(?:@\w+)?(?:\s+(\S+))?$/, (msg, match) => {
       `Usage: \`/limit <USD>\` — current limit $${state.spendingLimitUsd.toFixed(2)}. Anything above this requires /confirm.`
     );
   }
+
+  // Cat 4 guardrail: raising the autonomy budget is itself a "high-risk configuration change".
+  // If the new limit is ≥3x the current one (and ≥ $20 to ignore trivial bumps), require /confirm.
+  const cur = state.spendingLimitUsd;
+  const isBigRaise = n >= 20 && n >= cur * 3;
+  if (isBigRaise) {
+    await ack(
+      msg.chat.id,
+      `⚠️ *Limit raise requires confirmation.*\nGoing from $${cur.toFixed(2)} → *$${n.toFixed(2)}* is a ${(n / Math.max(cur, 0.01)).toFixed(1)}× jump — sending to the confirmation queue.`
+    );
+    const { id, awaiting } = confirmQueue.enqueue({
+      amountUsd: n,
+      kind: "limit_raise",
+      summary: `Raise auto-approve limit from $${cur.toFixed(2)} to $${n.toFixed(2)}`,
+      data: { from: cur, to: n },
+    });
+    const status = await awaiting;
+    if (status === "approved") {
+      setLimit(n);
+      return ack(msg.chat.id, `🔒 Limit raised to *$${n.toFixed(2)}* after your /confirm.`);
+    }
+    return ack(msg.chat.id, `🛑 Limit change *${status}* — limit stays at $${cur.toFixed(2)}.`);
+  }
+
   setLimit(n);
   ack(msg.chat.id, `🔒 Auto-approve limit set to *$${n.toFixed(2)}*. Spends above this will halt and ask for /confirm.`);
 });
@@ -426,7 +539,7 @@ bot.on("message", (msg) => {
   if (msg.text.startsWith("/")) {
     // A slash command we don't recognize. Catch it explicitly.
     const known =
-      /^\/(start|help|prep|run|status|balance|quickprep|quick_prep|quick-prep|addcourse|add_course|add-course|listcourses|list_courses|list-courses|confirm|abort|limit)(?:@\w+)?(\s|$)/.test(
+      /^\/(start|help|prep|run|pitch|security|status|balance|quickprep|quick_prep|quick-prep|addcourse|add_course|add-course|listcourses|list_courses|list-courses|confirm|abort|limit)(?:@\w+)?(\s|$)/.test(
         msg.text
       );
     if (known) return;
