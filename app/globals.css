@@ -2,4 +2,87 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body { background: #0a0a0a; color: #e7e7ea; }
+html, body {
+  background: #0a0a0f;
+  color: #e7e7ea;
+}
+
+/* ── Custom utilities ─────────────────────────────────────────── */
+@layer utilities {
+  /* Glassmorphism */
+  .glass {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+  }
+  .glass-strong {
+    background: rgba(17, 17, 20, 0.7);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    background: linear-gradient(135deg, #ff5cd4 0%, #7c5cff 50%, #4cc9ff 100%);
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    animation: gradient-shift 8s ease-in-out infinite;
+  }
+  @keyframes gradient-shift {
+    0%, 100% { background-position: 0% 50%; }
+    50%      { background-position: 100% 50%; }
+  }
+
+  /* Hero radial backdrop */
+  .hero-gradient {
+    background:
+      radial-gradient(ellipse at 20% 0%,  rgba(124, 92, 255, 0.20) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 30%, rgba(76, 201, 255, 0.13) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 80%, rgba(255, 92, 212, 0.10) 0%, transparent 50%);
+  }
+
+  /* Subtle card glow + lift on hover */
+  .card-glow {
+    box-shadow:
+      0 4px 24px -8px rgba(124, 92, 255, 0.15),
+      0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+    transition: all 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .card-glow:hover {
+    box-shadow:
+      0 16px 48px -8px rgba(124, 92, 255, 0.35),
+      0 0 0 1px rgba(124, 92, 255, 0.25) inset;
+    transform: translateY(-2px);
+  }
+
+  /* 3D card flip */
+  .perspective { perspective: 1200px; }
+  .preserve-3d { transform-style: preserve-3d; }
+  .backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .rotate-y-180 { transform: rotateY(180deg); }
+
+  /* Scrollbar polish */
+  .pretty-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+  .pretty-scroll::-webkit-scrollbar-track { background: transparent; }
+  .pretty-scroll::-webkit-scrollbar-thumb {
+    background: #1f1f23;
+    border-radius: 4px;
+  }
+  .pretty-scroll::-webkit-scrollbar-thumb:hover { background: #2a2a30; }
+
+  /* Animated noise/grain texture overlay */
+  .noise::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}

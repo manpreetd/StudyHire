@@ -6,6 +6,10 @@ import { confirmQueue } from "@/agent/confirm-queue";
 import { payAndFetch } from "@/agent/payments";
 import { state, setLimit, addCourse, listCourses } from "@/agent/state";
 import { runOrchestrator } from "@/agent/orchestrator";
+import { startTriggerLoop } from "@/agent/trigger";
+import { produceStudyPack, type StudyPack } from "@/subagents/_lib/study-pack";
+import { complete, textOf } from "@/lib/llm";
+import { savePack } from "@/lib/pack-store";
 
 /**
  * Telegram bot — the rubric's judging surface.
@@ -26,16 +30,17 @@ Fund my GOAT wallet once, tell me your courses, and I'll:
 • Verify their work and release escrow to the winner
 
 *Commands:*
-/quickprep <topic>  – test me: I'll pay a topic-extractor $0.10 via x402
-/run [prompt]       – trigger the autonomous orchestrator (propose bounties + HITL gate)
-/status             – current jobs + balance + pending confirmations
-/balance            – wallet + escrow snapshot
-/addcourse <id>     – track a course
-/listcourses        – show tracked courses
-/confirm <id>       – approve a high-value action
-/abort <id>         – cancel a pending action
-/limit <USD>        – set auto-approve threshold (default $5)
-/help               – this menu
+/prep <course> <topic>  – full exam prep: 2 agents compete, verifier picks winner, get study pack
+/quickprep <topic>      – quick topic breakdown via x402 ($0.10)
+/run [prompt]           – trigger the autonomous orchestrator (propose bounties + HITL gate)
+/status                 – current jobs + balance + pending confirmations
+/balance                – wallet + escrow snapshot
+/addcourse <id>         – track a course
+/listcourses            – show tracked courses
+/confirm <id>           – approve a high-value action
+/abort <id>             – cancel a pending action
+/limit <USD>            – set auto-approve threshold (default $5)
+/help                   – this menu
 
 *Built on:* Claude (Anthropic) · ERC-8004 (GOAT mainnet) · x402 · StudyHire escrow`;
 
@@ -52,7 +57,8 @@ void bot
   .setMyCommands([
     { command: "start", description: "what I do + command list" },
     { command: "help", description: "same as /start" },
-    { command: "quickprep", description: "pay topic-extractor $0.10 via x402 (judge test)" },
+    { command: "prep", description: "full exam prep: 2 agents compete, verifier picks best study pack" },
+    { command: "quickprep", description: "quick topic breakdown via x402 ($0.10)" },
     { command: "run", description: "run the orchestrator with a custom prompt (Cat 4 demo)" },
     { command: "status", description: "current jobs + balance + pending confirmations" },
     { command: "balance", description: "wallet + escrow snapshot" },
@@ -204,6 +210,121 @@ ${lines}`,
   }
 });
 
+/**
+ * /prep <course> <topic>
+ * The full StudyHire pipeline in one command:
+ *  1. Pay topic-extractor via x402 to break the topic into subtopics
+ *  2. Two competing agents each produce a full study pack (flashcards + practice Qs)
+ *  3. Claude verifier scores both and picks the winner
+ *  4. Send the winner's study pack to Telegram
+ */
+bot.onText(/^\/prep(?:@\w+)?(?:\s+(\S+))?(?:\s+(.+))?$/, async (msg, match) => {
+  const course = (match?.[1] ?? "").trim();
+  const topic  = (match?.[2] ?? "").trim();
+  logIn(msg, `/prep ${course} ${topic}`);
+  // HTML-escape helper for all dynamic strings in HTML-mode messages
+  const h = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  if (!course || !topic) {
+    return ack(msg.chat.id, "Usage: `/prep <courseId> <topic>`\nExample: `/prep CS246 recursion and induction`");
+  }
+
+  await bot.sendMessage(
+    msg.chat.id,
+    `📚 <b>StudyHire pipeline starting</b>\n<b>${h(course)}</b> — ${h(topic)}\n\n1️⃣ Paying topic-extractor via x402...\n2️⃣ Two agents compete to write the best study pack\n3️⃣ Verifier picks the winner`,
+    { parse_mode: "HTML" }
+  );
+
+  // Step 1 — x402 topic extraction
+  const extractRes = await payAndFetch<{ subtopics?: Array<{ name: string; hook: string }> }>(
+    `${env.topicExtractorUrl}/extract`,
+    { method: "POST", json: { topic: `${course} ${topic}` } }
+  );
+  if (!extractRes.ok) {
+    return ack(msg.chat.id, `❌ Topic extractor failed: ${extractRes.reason}\n\nMake sure \`npm run extractor\` is running.`);
+  }
+  state.totalSpentUsd += extractRes.receipt.amountUsd;
+
+  const subtopics = extractRes.data.subtopics ?? [];
+  const topicLine = subtopics.slice(0, 3).map(s => s.name).join(", ") || topic;
+  await ack(msg.chat.id, `✅ *x402 paid* $${extractRes.receipt.amountUsd.toFixed(2)} · topics extracted\n\n⚔️ *Two agents now competing to write your study pack...*`);
+
+  // Step 2 — two agents compete in parallel
+  const brief = { course, topic, deliverable: `Exam-focused study pack. Key subtopics: ${topicLine}` };
+  let packA: StudyPack | null = null;
+  let packB: StudyPack | null = null;
+  try {
+    [packA, packB] = await Promise.all([
+      produceStudyPack(brief, "concise, exam-targeted, bulleted, no fluff"),
+      produceStudyPack(brief, "narrative, intuition-first, builds analogies before formalism"),
+    ]);
+  } catch (err) {
+    return ack(msg.chat.id, `❌ Study pack generation failed: ${err instanceof Error ? err.message : "unknown"}`);
+  }
+
+  activity.push({ kind: "submission_received", title: `Both agents submitted for ${topic}` });
+
+  // Step 3 — Claude verifier picks winner
+  let winner: StudyPack = packA;
+  let winnerName = "Agent A (concise)";
+  let rationale = "";
+  try {
+    const scoreMsg = await complete({
+      system: `You are the StudyHire verifier. Respond with a single JSON object only, no markdown, no fences. Schema: {"winner":"A","rationale":"one sentence"} — winner must be "A" or "B".`,
+      messages: [{
+        role: "user",
+        content: `Brief: ${JSON.stringify(brief)}\n\nPack A summary: ${packA.summary}\n\nPack B summary: ${packB.summary}`,
+      }],
+      maxTokens: 150,
+    });
+    const scoreText = textOf(scoreMsg)
+      .replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+    const start = scoreText.indexOf("{"), end = scoreText.lastIndexOf("}");
+    const parsed = start !== -1 && end > start ? JSON.parse(scoreText.slice(start, end + 1)) : null;
+    if (parsed?.winner === "B") { winner = packB; winnerName = "Agent B (narrative)"; }
+    rationale = parsed?.rationale ?? "";
+  } catch {
+    // verifier failed — default to pack A
+  }
+
+  // Step 4 — persist to disk and send a dashboard link
+  const stored = savePack({
+    course,
+    topic,
+    winnerAgent: winnerName,
+    winnerRationale: rationale,
+    pack: winner,
+    receipt: {
+      txHash: extractRes.receipt.txHash,
+      explorerUrl: extractRes.receipt.explorerUrl,
+      amountUsd: extractRes.receipt.amountUsd,
+    },
+  });
+
+  activity.push({
+    kind: "winner_declared",
+    title: `Winner: ${winnerName} for ${topic}`,
+    body: rationale,
+    data: { packId: stored.id, dashboardUrl: `http://localhost:3000/pack/${stored.id}` },
+  });
+
+  const packUrl = `http://localhost:3000/pack/${stored.id}`;
+  // Telegram refuses to make `<a href>` tags clickable when they point to localhost
+  // (it treats them as untrustworthy). Plain-text URLs DO get auto-linkified by every
+  // Telegram client, so we put the URL on its own line and let the client linkify it.
+  return bot.sendMessage(
+    msg.chat.id,
+    `✅ <b>Study pack ready!</b>\n\n` +
+    `📚 <b>${h(course)}</b> — ${h(topic)}\n` +
+    `🏆 ${h(winnerName)} won the competition\n` +
+    (rationale ? `<i>"${h(rationale)}"</i>\n` : "") +
+    `💳 x402: <code>${extractRes.receipt.txHash.slice(0, 20)}…</code> ($${extractRes.receipt.amountUsd.toFixed(2)})\n\n` +
+    `👉 <b>Open your study pack:</b>\n` +
+    `${packUrl}`,
+    { parse_mode: "HTML", disable_web_page_preview: true }
+  );
+});
+
 bot.onText(/^\/(?:addcourse|add_course|add-course)(?:@\w+)?(?:\s+(.+))?$/, (msg, match) => {
   logIn(msg, `/addcourse ${match?.[1] ?? ""}`);
   const arg = (match?.[1] ?? "").trim();
@@ -305,7 +426,7 @@ bot.on("message", (msg) => {
   if (msg.text.startsWith("/")) {
     // A slash command we don't recognize. Catch it explicitly.
     const known =
-      /^\/(start|help|run|status|balance|quickprep|quick_prep|quick-prep|addcourse|add_course|add-course|listcourses|list_courses|list-courses|confirm|abort|limit)(?:@\w+)?(\s|$)/.test(
+      /^\/(start|help|prep|run|status|balance|quickprep|quick_prep|quick-prep|addcourse|add_course|add-course|listcourses|list_courses|list-courses|confirm|abort|limit)(?:@\w+)?(\s|$)/.test(
         msg.text
       );
     if (known) return;
@@ -339,3 +460,7 @@ async function announceFromActivity() {
 void announceFromActivity();
 
 console.log(`[telegram-bot] polling. limit=$${state.spendingLimitUsd}, extractor=${env.topicExtractorUrl}`);
+
+// Start the D2L exam-detection loop. Reads cache/ every 60s; fires the orchestrator
+// automatically when an exam is within 5 days. Nothing happens if cache/ is empty.
+startTriggerLoop(60_000);

@@ -12,7 +12,7 @@ import { parseEther } from "viem";
 import { env } from "@/lib/env";
 import { addressOf, publicGoat, walletFor } from "@/agent/wallet";
 
-const AMOUNT_GOAT = "0.000002"; // 2e-6 GOAT — enough for dozens of registration txs
+const AMOUNT_GOAT = "0.0000004"; // 4e-7 GOAT — enough for 40+ registration txs at GOAT's ~0.0001 Gwei gas
 
 const RECIPIENTS = [
   { name: "topic-extractor", key: env.topicExtractorKey },

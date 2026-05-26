@@ -71,8 +71,10 @@ export async function registerAgent(d: AgentDescriptor): Promise<{
   const pk = process.env[d.key] ?? "";
   const address = addressOf(pk);
 
-  if (env.useMockChain || !env.erc8004RegistryAddress) {
-    activity.push({ kind: "agent_thought", title: `(mock) Would register ${d.name} @ ${address}` });
+  // Note: useMockChain only gates the StudyBounty escrow — ERC-8004 is a real contract
+  // on GOAT mainnet that's always available. Only skip if the registry address is missing.
+  if (!env.erc8004RegistryAddress) {
+    activity.push({ kind: "agent_thought", title: `(mock) Would register ${d.name} @ ${address} — no registry address` });
     return { ok: true, txHash: `0xmock-${d.name}`, address, agentId: "mock-id" };
   }
 
@@ -112,7 +114,7 @@ export async function registerAgent(d: AgentDescriptor): Promise<{
 }
 
 export async function verifyAgentWallet(agentId: bigint): Promise<Address | undefined> {
-  if (env.useMockChain || !env.erc8004RegistryAddress) return undefined;
+  if (!env.erc8004RegistryAddress) return undefined;
   const client = publicGoat();
   const addr = await client.readContract({
     abi: REGISTRY_ABI,
