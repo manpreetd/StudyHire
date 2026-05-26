@@ -1,8 +1,10 @@
 import { config } from "dotenv";
 
 // Load .env.local first (matches Next.js precedence), then .env as fallback.
-config({ path: ".env.local" });
-config({ path: ".env" });
+// override:true so that an empty/stale shell var (e.g. a leftover Windows PS
+// session that set ANTHROPIC_API_KEY="") cannot silently mask the real value.
+config({ path: ".env.local", override: true });
+config({ path: ".env", override: false });
 
 function req(name: string): string {
   const v = process.env[name];
