@@ -12,6 +12,7 @@
     "submitter-b": "tsx subagents/submitter-b/index.ts",
     "verifier": "tsx subagents/verifier/index.ts",
     "orchestrator": "tsx agent/orchestrator.ts",
+    "fund-agents": "tsx scripts/fund-agents.ts",
     "register": "tsx scripts/register-agents.ts",
     "verify-8004": "tsx scripts/verify-erc8004.ts",
     "deploy-bounty": "tsx scripts/deploy-bounty.ts",
