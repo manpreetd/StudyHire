@@ -59,8 +59,9 @@ interface X402Challenge {
   x402Version?: number;
   accepts?: X402Accept[];
   extensions?: { goatx402?: { expiresAt?: number } };
-  // Goat SDK extension: the order it just created on our behalf.
-  orderId?: string;
+  // GoatX402 SDK returns order_id (snake_case) in the raw 402 body.
+  order_id?: string;
+  orderId?: string; // camelCase alias — kept for compatibility
 }
 
 /**
@@ -154,7 +155,8 @@ export async function payAndFetch<T = unknown>(
   }
 
   const accept = challenge.accepts?.[0];
-  const orderId = (challenge as { orderId?: string }).orderId;
+  // GoatX402 SDK uses snake_case order_id in the raw 402 body; handle both forms.
+  const orderId = challenge.order_id ?? challenge.orderId;
   if (!accept || !orderId) {
     return { ok: false, reason: "malformed_x402_challenge" };
   }
